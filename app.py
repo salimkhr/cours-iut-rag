@@ -1,69 +1,262 @@
-import os
+from flask import Flask, request, jsonify, Response
+from flask_cors import CORS
 import json
 import ollama
+import threading
+import time
+from datetime import datetime
+from rag_system import VectorRAG
 
-# 1. Charger tous les fichiers JSON dans rag/corpus
-def load_all_course_blocks(directory="./rag/corpus"):
-    course_blocks = []
-    for root, _, files in os.walk(directory):
-        for file in files:
-            if file.endswith(".json"):
-                full_path = os.path.join(root, file)
-                with open(full_path, encoding="utf-8") as f:
-                    data = json.load(f)
-                    data["file"] = os.path.relpath(full_path, directory)
-                    course_blocks.append(data)
-    return course_blocks
+app = Flask(__name__)
+CORS(app)
 
-# 2. Rechercher les blocs de texte pertinents (recherche simple par mot-clé)
-def search_courses(question, all_courses):
-    matches = []
-    keywords = question.lower().split()
-    for course in all_courses:
-        for block in course["blocks"]:
-            text = block.get("content", "").lower()
-            if any(word in text for word in keywords):
-                matches.append((course["file"], block))
-    return matches
+# Configuration
+CORPUS_DIR = "./rag/corpus"
+MODEL_NAME = "all-MiniLM-L6-v2"
+OLLAMA_MODEL = "codellama:7b"
 
-# 3. Construire un prompt clair à partir des blocs trouvés
-def build_rag_prompt(matches, question):
-    context = ""
-    for filename, block in matches:
-        context += f"\n### {filename} – {block['type']}\n{block['content']}\n"
-    prompt = f"""
-Voici des extraits de cours universitaires :
+# Instance globale du système RAG
+rag_system = None
+rag_lock = threading.Lock()
 
-{context}
 
-Réponds de manière claire et structurée à la question suivante, uniquement en te basant sur ces extraits :
+def initialize_rag():
+    """Initialise le système RAG de manière thread-safe"""
+    global rag_system
+    with rag_lock:
+        if rag_system is None:
+            print("🚀 Initialisation du système RAG...")
+            rag_system = VectorRAG(model_name=MODEL_NAME, corpus_dir=CORPUS_DIR)
 
-→ {question}
-"""
-    return prompt.strip()
 
-# 4. Envoyer le prompt à Ollama
-def ask_ollama(prompt, model="codellama:7b"):
-    response = ollama.chat(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        stream=False
-    )
-    return response["message"]["content"]
+# Thread de surveillance des modifications
+def watch_corpus_changes():
+    """Thread qui surveille les changements dans le corpus"""
+    while True:
+        try:
+            if rag_system:
+                rag_system._check_and_reload_if_needed()
+            time.sleep(10)  # Vérification toutes les 10 secondes
+        except Exception as e:
+            print(f"❌ Erreur dans la surveillance du corpus: {e}")
+            time.sleep(30)  # Attendre plus longtemps en cas d'erreur
 
-# 5. App principale
-if __name__ == "__main__":
-    question = input("💬 Pose ta question sur le cours :\n> ")
-    print("\n🔍 Recherche dans les fichiers de cours...\n")
 
-    courses = load_all_course_blocks()
-    matches = search_courses(question, courses)
+# Démarrage du thread de surveillance
+watcher_thread = threading.Thread(target=watch_corpus_changes, daemon=True)
+watcher_thread.start()
 
-    if not matches:
-        print("❌ Aucun extrait de cours pertinent trouvé.")
-    else:
-        prompt = build_rag_prompt(matches, question)
-        print("📡 Envoi à Ollama...\n")
-        response = ask_ollama(prompt)
-        print("✅ Réponse :\n")
-        print(response)
+
+# @app.before_first_request
+# def startup():
+#     """Initialisation lors du premier accès"""
+#     initialize_rag()
+
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Endpoint de santé avec statistiques détaillées"""
+    try:
+        if rag_system is None:
+            initialize_rag()
+
+        stats = rag_system.get_stats()
+
+        # Test de connectivité Ollama
+        ollama_status = "unknown"
+        try:
+            ollama.list()
+            ollama_status = "connected"
+        except Exception:
+            ollama_status = "disconnected"
+
+        return jsonify({
+            "status": "ok",
+            "timestamp": datetime.now().isoformat(),
+            "rag_system": stats,
+            "ollama_status": ollama_status,
+            "ollama_model": OLLAMA_MODEL
+        })
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }), 500
+
+
+@app.route('/corpus/info', methods=['GET'])
+def corpus_info():
+    """Informations détaillées sur le corpus"""
+    try:
+        if rag_system is None:
+            initialize_rag()
+
+        files_info = rag_system.data_loader.list_corpus_files()
+        stats = rag_system.get_stats()
+
+        return jsonify({
+            "corpus_directory": CORPUS_DIR,
+            "files": files_info,
+            "total_files": len(files_info),
+            "system_stats": stats
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/corpus/reload', methods=['POST'])
+def reload_corpus():
+    """Force le rechargement du corpus"""
+    try:
+        if rag_system is None:
+            initialize_rag()
+
+        with rag_lock:
+            rag_system.force_reload()
+
+        stats = rag_system.get_stats()
+
+        return jsonify({
+            "message": "Corpus rechargé avec succès",
+            "stats": stats,
+            "timestamp": datetime.now().isoformat()
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/search', methods=['POST'])
+def search_only():
+    """Endpoint pour la recherche seule (sans LLM)"""
+    try:
+        if rag_system is None:
+            initialize_rag()
+
+        data = request.get_json()
+        query = data.get('query', '').strip()
+        k = data.get('k', 5)
+
+        if not query:
+            return jsonify({"error": "Query vide"}), 400
+
+        with rag_lock:
+            results = rag_system.search_similar(query, k=k)
+
+        return jsonify({
+            "query": query,
+            "results": results,
+            "count": len(results)
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/chat', methods=['POST'])
+def chat():
+    """Chat sans streaming"""
+    try:
+        if rag_system is None:
+            initialize_rag()
+
+        data = request.get_json()
+        message = data.get('message', '').strip()
+        k = data.get('k', 3)  # Nombre de documents à récupérer
+
+        if not message:
+            return jsonify({"error": "Message vide"}), 400
+
+        # Recherche RAG avec thread safety
+        with rag_lock:
+            results = rag_system.search_similar(message, k=k)
+            prompt = rag_system.build_rag_prompt(results, message)
+
+        # Appel Ollama
+        try:
+            response = ollama.chat(
+                model=OLLAMA_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                stream=False
+            )
+
+            return jsonify({
+                "response": response["message"]["content"],
+                "sources": [{
+                    "file": r["file"],
+                    "type": r["type"],
+                    "similarity_score": r["similarity_score"],
+                    "content_preview": r["content"][:150] + "..." if len(r["content"]) > 150 else r["content"]
+                } for r in results],
+                "query": message,
+                "timestamp": datetime.now().isoformat()
+            })
+
+        except Exception as e:
+            return jsonify({"error": f"Erreur Ollama: {str(e)}"}), 500
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/chat/stream', methods=['POST'])
+def chat_stream():
+    """Chat avec streaming"""
+    try:
+        if rag_system is None:
+            initialize_rag()
+
+        data = request.get_json()
+        message = data.get('message', '').strip()
+        k = data.get('k', 3)
+
+        if not message:
+            return Response(
+                f"data: {json.dumps({'error': 'Message vide'})}\n\n",
+                mimetype='text/plain'
+            )
+
+        # Recherche RAG
+        with rag_lock:
+            results = rag_system.search_similar(message, k=k)
+            prompt = rag_system.build_rag_prompt(results, message)
+
+        def generate():
+            try:
+                # Stream depuis Ollama
+                stream = ollama.chat(
+                    model="codellama:7b",
+                    messages=[{"role": "user", "content": prompt}],
+                    stream=True
+                )
+
+                for chunk in stream:
+                    if 'message' in chunk:
+                        content = chunk['message'].get('content', '')
+                        if content:
+                            # Format Server-Sent Events
+                            yield f"data: {json.dumps({'content': content})}\n\n"
+
+                # Envoi des sources à la fin
+                sources_data = {
+                    "sources": [{"file": r["file"], "type": r["type"], "score": r["similarity_score"]} for r in results]
+                }
+                yield f"data: {json.dumps(sources_data)}\n\n"
+                yield "data: [DONE]\n\n"
+
+            except Exception as e:
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+        return Response(generate(),
+                        mimetype='text/plain',
+                        headers={'Cache-Control': 'no-cache'})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0', port=5000)
