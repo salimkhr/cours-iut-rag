@@ -214,9 +214,10 @@ def chat_stream():
         k = data.get('k', 3)
 
         if not message:
+            error_json = json.dumps({"error": "Message vide"})
             return Response(
-                f"data: {json.dumps({'error': 'Message vide'})}\n\n",
-                mimetype='text/plain'
+                f"data: {error_json}\n\n",
+                mimetype='text/event-stream'  # event-stream est mieux pour SSE
             )
 
         # Recherche RAG
@@ -237,25 +238,38 @@ def chat_stream():
                     if 'message' in chunk:
                         content = chunk['message'].get('content', '')
                         if content:
-                            # Format Server-Sent Events
-                            yield f"data: {json.dumps({'content': content})}\n\n"
+                            data_json = json.dumps({"content": content, "done":0})
+                            yield f"data: {data_json}\n\n"
 
                 # Envoi des sources à la fin
                 sources_data = {
-                    "sources": [{"file": r["file"], "type": r["type"], "score": r["similarity_score"]} for r in results]
+                    "sources": [
+                        {
+                            "file": r["file"],
+                            "type": r["type"],
+                            "score": r["similarity_score"],
+                            "done":1
+                        }
+                        for r in results
+                    ]
                 }
+                yield f"data: {json.dumps(sources_data)}\n\n"
                 yield f"data: {json.dumps(sources_data)}\n\n"
                 yield "data: [DONE]\n\n"
 
             except Exception as e:
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                error_json = json.dumps({"error": str(e)})
+                yield f"data: {error_json}\n\n"
 
-        return Response(generate(),
-                        mimetype='text/plain',
-                        headers={'Cache-Control': 'no-cache'})
+        return Response(
+            generate(),
+            mimetype='text/event-stream',
+            headers={'Cache-Control': 'no-cache'}
+        )
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 
 if __name__ == '__main__':
