@@ -1,4 +1,6 @@
-from flask import Flask, request, jsonify, Response
+import os
+
+from flask import Flask, request, jsonify, Response, abort
 from flask_cors import CORS
 import json
 import ollama
@@ -6,12 +8,16 @@ import threading
 import time
 from datetime import datetime
 from rag_system import VectorRAG
+from auth import require_api_key
+from dotenv import load_dotenv
+
+load_dotenv(".env.local")
 
 app = Flask(__name__)
 CORS(app)
 
 # Configuration
-CORPUS_DIR = "./rag/corpus"
+CORPUS_DIR = "./rag/markdown"
 MODEL_NAME = "all-MiniLM-L6-v2"
 OLLAMA_MODEL = "codellama:7b"
 
@@ -53,58 +59,58 @@ watcher_thread.start()
 #     initialize_rag()
 
 
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Endpoint de santé avec statistiques détaillées"""
-    try:
-        if rag_system is None:
-            initialize_rag()
+# @app.route('/health', methods=['GET'])
+# def health_check():
+#     """Endpoint de santé avec statistiques détaillées"""
+#     try:
+#         if rag_system is None:
+#             initialize_rag()
+#
+#         stats = rag_system.get_stats()
+#
+#         # Test de connectivité Ollama
+#         ollama_status = "unknown"
+#         try:
+#             ollama.list()
+#             ollama_status = "connected"
+#         except Exception:
+#             ollama_status = "disconnected"
+#
+#         return jsonify({
+#             "status": "ok",
+#             "timestamp": datetime.now().isoformat(),
+#             "rag_system": stats,
+#             "ollama_status": ollama_status,
+#             "ollama_model": OLLAMA_MODEL
+#         })
+#
+#     except Exception as e:
+#         return jsonify({
+#             "status": "error",
+#             "error": str(e),
+#             "timestamp": datetime.now().isoformat()
+#         }), 500
 
-        stats = rag_system.get_stats()
 
-        # Test de connectivité Ollama
-        ollama_status = "unknown"
-        try:
-            ollama.list()
-            ollama_status = "connected"
-        except Exception:
-            ollama_status = "disconnected"
-
-        return jsonify({
-            "status": "ok",
-            "timestamp": datetime.now().isoformat(),
-            "rag_system": stats,
-            "ollama_status": ollama_status,
-            "ollama_model": OLLAMA_MODEL
-        })
-
-    except Exception as e:
-        return jsonify({
-            "status": "error",
-            "error": str(e),
-            "timestamp": datetime.now().isoformat()
-        }), 500
-
-
-@app.route('/corpus/info', methods=['GET'])
-def corpus_info():
-    """Informations détaillées sur le corpus"""
-    try:
-        if rag_system is None:
-            initialize_rag()
-
-        files_info = rag_system.data_loader.list_corpus_files()
-        stats = rag_system.get_stats()
-
-        return jsonify({
-            "corpus_directory": CORPUS_DIR,
-            "files": files_info,
-            "total_files": len(files_info),
-            "system_stats": stats
-        })
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+# @app.route('/corpus/info', methods=['GET'])
+# def corpus_info():
+#     """Informations détaillées sur le corpus"""
+#     try:
+#         if rag_system is None:
+#             initialize_rag()
+#
+#         files_info = rag_system.data_loader.list_corpus_files()
+#         stats = rag_system.get_stats()
+#
+#         return jsonify({
+#             "corpus_directory": CORPUS_DIR,
+#             "files": files_info,
+#             "total_files": len(files_info),
+#             "system_stats": stats
+#         })
+#
+#     except Exception as e:
+#         return jsonify({"error": str(e)}), 500
 
 
 @app.route('/corpus/reload', methods=['POST'])
@@ -128,40 +134,50 @@ def reload_corpus():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.before_request
+def check_api_key():
+    exempt_routes = ["/docs","/corpus/reload"]
+    if request.path in exempt_routes:
+        return  # ne vérifie pas
+    api_key = request.headers.get("x-api-key")
 
-@app.route('/search', methods=['POST'])
-def search_only():
-    """Endpoint pour la recherche seule (sans LLM)"""
-    try:
-        if rag_system is None:
-            initialize_rag()
+    expected = os.getenv("PYTHON_API_KEY")
+    if not api_key or api_key != expected:
+        abort(403)
 
-        data = request.get_json()
-        query = data.get('query', '').strip()
-        k = data.get('k', 5)
-
-        if not query:
-            return jsonify({"error": "Query vide"}), 400
-
-        with rag_lock:
-            results = rag_system.search_similar(query, k=k)
-
-        return jsonify({
-            "query": query,
-            "results": results,
-            "count": len(results)
-        })
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+# @app.route('/search', methods=['POST'])
+# def search_only():
+#     """Endpoint pour la recherche seule (sans LLM)"""
+#     try:
+#         if rag_system is None:
+#             initialize_rag()
+#
+#         data = request.get_json()
+#         query = data.get('query', '').strip()
+#         k = data.get('k', 5)
+#
+#         if not query:
+#             return jsonify({"error": "Query vide"}), 400
+#
+#         with rag_lock:
+#             results = rag_system.search_similar(query, k=k)
+#
+#         return jsonify({
+#             "query": query,
+#             "results": results,
+#             "count": len(results)
+#         })
+#
+#     except Exception as e:
+#         return jsonify({"error": str(e)}), 500
 
 
 @app.route('/chat', methods=['POST'])
 def chat():
     """Chat sans streaming"""
     try:
-        if rag_system is None:
-            initialize_rag()
+        # if rag_system is None:
+        initialize_rag()
 
         data = request.get_json()
         message = data.get('message', '').strip()
@@ -222,7 +238,7 @@ def chat_stream():
 
         # Recherche RAG
         with rag_lock:
-            results = rag_system.search_similar(message, k=k)
+            results = rag_system.search_similar(message, k=k, include_neighbors=True)
             prompt = rag_system.build_rag_prompt(results, message)
 
         def generate():

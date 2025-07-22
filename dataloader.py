@@ -1,25 +1,21 @@
-# dataloader.py
 import os
-import json
 from typing import List, Dict
-
+import markdown
+from markdown.treeprocessors import Treeprocessor
+from markdown.extensions import Extension
 
 class CourseDataLoader:
     """
-    Gestionnaire de chargement des données de cours depuis les fichiers JSON
+    Gestionnaire de chargement des données de cours depuis des fichiers Markdown
     """
 
-    def __init__(self, corpus_dir: str = "./rag/corpus"):
+    def __init__(self, corpus_dir: str):
         self.corpus_dir = corpus_dir
 
     def load_all_course_blocks(self) -> List[Dict]:
-        """
-        Charge tous les fichiers JSON du corpus
-
-        Returns:
-            Liste des blocs de cours avec métadonnées
-        """
         course_blocks = []
+
+        print(self.corpus_dir)
 
         if not os.path.exists(self.corpus_dir):
             print(f"⚠️ Répertoire corpus introuvable: {self.corpus_dir}")
@@ -30,142 +26,110 @@ class CourseDataLoader:
 
         for root, _, files in os.walk(self.corpus_dir):
             for file in files:
-                if file.endswith(".json"):
+                if file.endswith(".md"):
+                    print(f"📊 Traitement de {file}")
                     total_files += 1
                     full_path = os.path.join(root, file)
 
                     try:
                         with open(full_path, encoding="utf-8") as f:
-                            data = json.load(f)
+                            md_content = f.read()
 
-                        # Validation de base de la structure
-                        if self._validate_course_structure(data, full_path):
-                            data["file"] = os.path.relpath(full_path, self.corpus_dir)
-                            data["full_path"] = full_path
-                            course_blocks.append(data)
+                        blocks = self._parse_markdown_blocks(md_content)
+                        if blocks:
+                            course_blocks.append({
+                                "file": os.path.relpath(full_path, self.corpus_dir),
+                                "full_path": full_path,
+                                "blocks": blocks,
+                            })
                             loaded_files += 1
+                        else:
+                            print(f"⚠️ Aucun bloc extrait dans {full_path}")
 
-                    except json.JSONDecodeError as e:
-                        print(f"❌ Erreur JSON dans {full_path}: {e}")
                     except Exception as e:
                         print(f"❌ Erreur lors du chargement de {full_path}: {e}")
 
         print(f"📊 {loaded_files}/{total_files} fichiers chargés depuis {self.corpus_dir}")
         return course_blocks
 
-    def _validate_course_structure(self, data: Dict, file_path: str) -> bool:
+    def _parse_markdown_blocks(self, md_content: str) -> List[Dict]:
         """
-        Valide la structure d'un fichier de cours
+        Parse le contenu Markdown et extrait les blocs (titre, texte, liste, code, table).
 
-        Args:
-            data: Données JSON chargées
-            file_path: Chemin du fichier pour les messages d'erreur
+        Ici on fait simple : découpe par lignes, détecte les blocs de code, titres, listes.
 
         Returns:
-            True si la structure est valide
+            Liste des blocs sous forme de dictionnaires avec 'type' et 'content'
         """
-        if not isinstance(data, dict):
-            print(f"⚠️ Structure invalide dans {file_path}: doit être un objet JSON")
-            return False
+        blocks = []
+        lines = md_content.splitlines()
+        buffer = []
+        current_type = None
 
-        if "blocks" not in data:
-            print(f"⚠️ Clé 'blocks' manquante dans {file_path}")
-            return False
+        def flush_buffer():
+            nonlocal buffer, current_type
+            if buffer:
+                content = "\n".join(buffer).strip()
+                if content:
+                    blocks.append({"type": current_type or "content", "content": content})
+                buffer = []
+                current_type = None
 
-        if not isinstance(data["blocks"], list):
-            print(f"⚠️ 'blocks' doit être une liste dans {file_path}")
-            return False
+        in_code_block = False
+        code_block_lang = None
 
-        # Validation des blocs
-        valid_blocks = 0
-        for i, block in enumerate(data["blocks"]):
-            if self._validate_block_structure(block, file_path, i):
-                valid_blocks += 1
+        for line in lines:
+            # Détection bloc code markdown ```
+            if line.startswith("```"):
+                if not in_code_block:
+                    flush_buffer()
+                    in_code_block = True
+                    code_block_lang = line[3:].strip()
+                    current_type = "code"
+                    buffer = []
+                else:
+                    # fin du bloc code
+                    flush_buffer()
+                    in_code_block = False
+                    code_block_lang = None
+                continue
 
-        if valid_blocks == 0:
-            print(f"⚠️ Aucun bloc valide trouvé dans {file_path}")
-            return False
+            if in_code_block:
+                buffer.append(line)
+                continue
 
-        return True
+            # Détection titre Markdown
+            if line.startswith("#"):
+                flush_buffer()
+                level = len(line) - len(line.lstrip('#'))
+                content = line.lstrip('#').strip()
+                blocks.append({"type": "heading", "level": level, "content": content})
+                continue
 
-    def _validate_block_structure(self, block: Dict, file_path: str, block_index: int) -> bool:
-        """
-        Valide la structure d'un bloc de contenu
+            # Détection liste (lignes commençant par - ou *)
+            if line.strip().startswith(("-", "*")):
+                if current_type != "list":
+                    flush_buffer()
+                    current_type = "list"
+                    buffer = []
+                buffer.append(line.strip())
+                continue
 
-        Args:
-            block: Bloc de contenu
-            file_path: Chemin du fichier
-            block_index: Index du bloc
+            # Ligne vide : flush buffer
+            if not line.strip():
+                flush_buffer()
+                continue
 
-        Returns:
-            True si le bloc est valide
-        """
-        if not isinstance(block, dict):
-            print(f"⚠️ Bloc {block_index} invalide dans {file_path}: doit être un objet")
-            return False
+            # Par défaut texte
+            if current_type not in (None, "content"):
+                flush_buffer()
+                current_type = "content"
+                buffer = []
 
-        required_fields = ["type", "content"]
-        for field in required_fields:
-            if field not in block:
-                print(f"⚠️ Champ '{field}' manquant dans le bloc {block_index} de {file_path}")
-                return False
+            current_type = current_type or "content"
+            buffer.append(line)
 
-        if not block["content"].strip():
-            print(f"⚠️ Contenu vide dans le bloc {block_index} de {file_path}")
-            return False
+        flush_buffer()
+        return blocks
 
-        return True
-
-    def get_file_info(self, file_path: str) -> Dict:
-        """
-        Obtient des informations sur un fichier de cours
-
-        Args:
-            file_path: Chemin vers le fichier JSON
-
-        Returns:
-            Dictionnaire avec les informations du fichier
-        """
-        full_path = os.path.join(self.corpus_dir, file_path)
-
-        if not os.path.exists(full_path):
-            return {"error": "Fichier introuvable"}
-
-        try:
-            stat = os.stat(full_path)
-            with open(full_path, encoding="utf-8") as f:
-                data = json.load(f)
-
-            return {
-                "file_path": file_path,
-                "size_bytes": stat.st_size,
-                "last_modified": stat.st_mtime,
-                "blocks_count": len(data.get("blocks", [])),
-                "title": data.get("title", "Sans titre"),
-                "description": data.get("description", ""),
-            }
-
-        except Exception as e:
-            return {"error": str(e)}
-
-    def list_corpus_files(self) -> List[Dict]:
-        """
-        Liste tous les fichiers du corpus avec leurs informations
-
-        Returns:
-            Liste des informations de fichiers
-        """
-        files_info = []
-
-        if not os.path.exists(self.corpus_dir):
-            return files_info
-
-        for root, _, files in os.walk(self.corpus_dir):
-            for file in files:
-                if file.endswith(".json"):
-                    full_path = os.path.join(root, file)
-                    relative_path = os.path.relpath(full_path, self.corpus_dir)
-                    info = self.get_file_info(relative_path)
-                    files_info.append(info)
-
-        return sorted(files_info, key=lambda x: x.get("file_path", ""))
+    # Les autres méthodes (validation, infos, listing) peuvent être adaptées selon les besoins
