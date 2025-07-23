@@ -1,5 +1,4 @@
 import os
-import time
 
 from flask import Flask, request, jsonify, Response, abort
 from flask_cors import CORS
@@ -7,7 +6,7 @@ import json
 import ollama
 import threading
 from datetime import datetime
-from rag_system import VectorRAG
+from src.rag_system import VectorRAG
 from dotenv import load_dotenv
 
 load_dotenv(".env.local")

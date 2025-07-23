@@ -74,11 +74,27 @@ class TextProcessor:
         return text
 
     def _split_by_paragraphs(self, text: str) -> List[str]:
-        """Découpe le texte par paragraphes"""
-        # Découpage sur double saut de ligne ou points suivis de majuscule
-        paragraphs = re.split(r'\n\n+|\. +(?=[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ])', text)
+        # Découpage sur double saut de ligne ou points suivis de majuscule,
+        # en conservant le point à la fin du paragraphe
+        parts = re.split(r'(\n\n+|(?<=\.)(?= +[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ]))', text)
 
-        return [p.strip() for p in paragraphs if p.strip()]
+        paragraphs = []
+        current = ""
+        for part in parts:
+            if re.match(r'\n\n+', part):
+                if current.strip():
+                    paragraphs.append(current.strip())
+                current = ""
+            elif re.match(r'(?<=\.)(?= +[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ])', part):
+                # séparation par phrase : on termine le paragraphe en gardant le point
+                if current.strip():
+                    paragraphs.append(current.strip())
+                current = ""
+            else:
+                current += part
+        if current.strip():
+            paragraphs.append(current.strip())
+        return paragraphs
 
     def _split_by_sentences(self, text: str) -> List[str]:
         """

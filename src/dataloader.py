@@ -176,9 +176,20 @@ class CourseDataLoader:
                     in_code_block = True
                     current_type = "code"
                     buffer = []
+
+                    # 🔍 extraire la langue éventuelle
+                    language = stripped[3:].strip() or None
                 else:
-                    flush_buffer()
+                    # 🔚 Fin du bloc de code
+                    blocks.append({
+                        "type": "code",
+                        "language": language,
+                        "content": "\n".join(buffer)
+                    })
                     in_code_block = False
+                    buffer = []
+                    current_type = None
+                    language = None
                 continue
 
             if in_code_block:
