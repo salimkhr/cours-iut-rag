@@ -1,6 +1,4 @@
-# rag_system.py - Version avec Cosine Similarity
 import os
-import json
 import time
 from sentence_transformers import SentenceTransformer
 import faiss

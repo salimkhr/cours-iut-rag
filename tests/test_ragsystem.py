@@ -5,7 +5,7 @@ import pytest
 import numpy as np
 from unittest.mock import MagicMock
 
-from src.rag_system import VectorRAG
+from rag_system import VectorRAG
 
 @pytest.fixture
 def fake_corpus_dir():
