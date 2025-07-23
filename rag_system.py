@@ -12,8 +12,36 @@ from text_processor import TextProcessor
 
 class VectorRAG:
     """
-    Système RAG vectoriel avec Cosine Similarity et rechargement automatique
+    Représente un système de recherche dense utilisant une approche Retrieval-Augmented Generation (RAG).
+    Il permet d’associer les requêtes des utilisateurs à des documents pertinents
+    dans un corpus pré-indexé, en s’appuyant sur des embeddings et des mesures de similarité
+    pour une récupération efficace de l’information.
+
+    Cette classe intègre des fonctions pour gérer l’indexation des documents,
+    retrouver des documents similaires selon les requêtes, et calculer la similarité cosinus.
+    Elle utilise un modèle SentenceTransformer pour générer les embeddings, FAISS pour l’index vectoriel,
+    et inclut des mécanismes de gestion et mise à jour du corpus.
+
+    :ivar model_name: Nom du modèle transformer utilisé pour générer les embeddings.
+    :type model_name: str
+    :ivar corpus_dir: Chemin du dossier contenant les fichiers du corpus à indexer.
+    :type corpus_dir: str
+    :ivar similarity_metric: Métrique utilisée pour le calcul de similarité. Par défaut "cosine".
+    :type similarity_metric: str
+    :ivar model: Instance du modèle SentenceTransformer pour la génération d’embeddings.
+    :type model: Optional[SentenceTransformer]
+    :ivar index: Index FAISS utilisé pour stocker et rechercher les vecteurs d’embeddings.
+    :type index: Optional[faiss.Index]
+    :ivar meta: Métadonnées associées aux documents indexés pour faciliter la récupération.
+    :type meta: Optional[List[Dict]]
+    :ivar last_modified: Timestamp de la dernière modification du corpus.
+    :type last_modified: float
+    :ivar data_loader: Instance responsable du chargement des données du cours depuis le disque.
+    :type data_loader: CourseDataLoader
+    :ivar text_processor: Composant qui traite et prépare les textes pour la génération d’embeddings.
+    :type text_processor: TextProcessor
     """
+
 
     def __init__(self, model_name: str, corpus_dir: str, similarity_metric: str = "cosine"):
         self.model_name = model_name
@@ -33,14 +61,34 @@ class VectorRAG:
         self._check_and_reload_if_needed()
 
     def _load_model(self):
-        """Charge le modèle SentenceTransformer"""
+        """
+        Charge un modèle SentenceTransformer s’il n’est pas déjà chargé.
+
+        Cette méthode vérifie si le modèle est actuellement chargé.
+        Si le modèle n’est pas chargé (c’est-à-dire s’il est `None`),
+        un modèle SentenceTransformer correspondant à l’attribut `model_name`
+        est chargé et assigné à l’attribut `model`.
+
+        :raises RuntimeError: En cas de problème lors du chargement du modèle.
+
+        :return: None
+        """
         if self.model is None:
             print(f"🔄 Chargement du modèle {self.model_name}...")
             self.model = SentenceTransformer(self.model_name)
             print("✅ Modèle chargé")
 
     def _get_corpus_last_modified(self) -> float:
-        """Obtient le timestamp de dernière modification du corpus"""
+        """
+        Détermine la date de la dernière modification parmi tous les fichiers markdown (.md)
+        dans un répertoire donné ainsi que ses sous-répertoires.
+        Si le répertoire n’existe pas, retourne 0.
+
+        :param self: L’instance de la classe contenant l’attribut du répertoire du corpus.
+        :return: Le timestamp (en secondes depuis l’époque) du fichier markdown le plus récemment modifié,
+                 ou 0 si le répertoire n’existe pas ou ne contient aucun fichier markdown.
+        :rtype: float
+        """
         if not os.path.exists(self.corpus_dir):
             return 0
 
@@ -54,12 +102,31 @@ class VectorRAG:
         return latest_time
 
     def _normalize_embeddings(self, embeddings: np.ndarray) -> np.ndarray:
-        """Normalise les embeddings pour utiliser cosine similarity avec dot product"""
+        """
+       Normalise les embeddings pour en faire des vecteurs unitaires.
+
+        Cette méthode prend un tableau NumPy 2D d’embeddings et normalise chaque vecteur
+        pour qu’il ait une norme égale à 1. Cela garantit que tous les embeddings se trouvent
+        sur l’hypersphère unité, ce qui est souvent nécessaire pour les calculs de similarité.
+
+        :param embeddings: Tableau NumPy 2D de forme (n_samples, n_features), où chaque ligne représente un vecteur embedding.
+        :return: Tableau NumPy 2D de forme (n_samples, n_features), où chaque ligne est un vecteur unitaire normalisé correspondant à la ligne d’entrée.
+        """
         norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
         return embeddings / norms
 
     def _build_index(self):
-        """Construit l'index FAISS à partir du corpus"""
+        """
+        Construit l’index des embeddings textuels à partir des blocs de cours chargés.
+
+        Cette fonction prépare et encode les données textuelles pour la recherche.
+        Elle traite le texte, génère les embeddings avec un modèle prédéfini,
+        et les stocke dans un index FAISS adapté selon la métrique de similarité choisie.
+        Les embeddings peuvent être configurés pour utiliser la similarité cosinus ou la distance euclidienne.
+        Si aucun bloc de cours ou texte valide n’est trouvé, l’index et les métadonnées sont réinitialisés.
+
+        :raises Exception: En cas d’erreur lors du traitement des données, de la génération des embeddings ou de la création de l’index.
+        """
         try:
             course_blocks = self.data_loader.load_all_course_blocks()
             if not course_blocks:
@@ -103,7 +170,15 @@ class VectorRAG:
             self.meta = []
 
     def _check_and_reload_if_needed(self, force: bool = False) -> bool:
-        """Vérifie si le corpus a été modifié et recharge si nécessaire"""
+        """
+        Vérifie et recharge les données si nécessaire, en fonction du timestamp de modification ou
+        si le rechargement est forcé. Cette méthode contrôle la date de dernière modification du corpus
+        et décide de reconstruire l’index selon les changements détectés ou si un rechargement est demandé.
+
+        :param force: Booléen indiquant si le rechargement doit être forcé,
+                      même si le timestamp n’a pas changé.
+        :return: Booléen indiquant si les données ont été rechargées ou non.
+        """
         current_modified = self._get_corpus_last_modified()
 
         if force or current_modified > self.last_modified:
@@ -115,15 +190,22 @@ class VectorRAG:
 
     def search_similar(self, query: str, k: int = 5, include_neighbors: bool = True) -> List[Dict]:
         """
-        Recherche les documents similaires à la requête avec cosine similarity
+        Recherche des éléments similaires dans les données indexées à partir de la requête fournie,
+        et retourne une liste des correspondances avec leurs scores de similarité.
+        Cette fonction utilise le modèle pré-entraîné pour générer les embeddings,
+        et recherche dans l’index les résultats les plus pertinents selon la métrique de similarité.
+        Le résultat peut optionnellement inclure les éléments voisins adjacents aux entrées correspondantes dans les métadonnées.
 
-        Args:
-            query: Question de l'utilisateur
-            k: Nombre de résultats principaux à retourner
-            include_neighbors: Ajoute les extraits voisins si True
-
-        Returns:
-            Liste enrichie de documents pertinents avec scores
+        :param query: La requête textuelle à rechercher. Elle est encodée en embedding avant la comparaison de similarité.
+        :type query: str
+        :param k: Nombre de meilleurs résultats à retourner. Par défaut 5.
+        :type k: int
+        :param include_neighbors: Indique si les éléments voisins doivent être inclus dans les résultats. Par défaut True.
+        :type include_neighbors: bool
+        :return: Une liste de dictionnaires représentant les résultats de la recherche.
+                 Chaque dictionnaire contient les métadonnées de l’élément trouvé et son score de similarité calculé.
+                 Les voisins, s’ils sont inclus, ont le même score de similarité.
+        :rtype: List[Dict]
         """
         self._check_and_reload_if_needed()
 
@@ -187,8 +269,18 @@ class VectorRAG:
 
     def calculate_cosine_similarity_manual(self, text1: str, text2: str) -> float:
         """
-        Calcule manuellement la cosine similarity entre deux textes
-        Utile pour debug ou comparaisons
+        Calcule la similarité cosinus entre deux textes d’entrée en utilisant le modèle fourni,
+        sans utiliser de fonctions préconstruites de similarité cosinus.
+
+        La similarité cosinus est calculée manuellement à partir du produit scalaire des vecteurs
+        et de leurs magnitudes respectives.
+
+        :param text1: Premier texte d’entrée pour le calcul.
+        :type text1: str
+        :param text2: Second texte d’entrée pour le calcul.
+        :type text2: str
+        :return: Le score de similarité cosinus entre les deux textes en nombre flottant.
+        :rtype: float
         """
         emb1 = self.model.encode([text1], convert_to_numpy=True)
         emb2 = self.model.encode([text2], convert_to_numpy=True)
@@ -202,7 +294,18 @@ class VectorRAG:
 
     def build_rag_prompt(self, results: List[Dict], question: str) -> str:
         """
-        Construit le prompt RAG à partir des résultats avec info de similarité
+        Construit un prompt pour répondre à une question en utilisant les résultats fournis.
+        Cette fonction génère un contexte structuré à partir des résultats, qui sert de base à la réponse,
+        tout en fournissant des instructions détaillées sur la manière dont la réponse doit être formulée.
+
+        :param results: Liste de dictionnaires représentant des extraits pertinents de cours universitaires.
+                        Chaque dictionnaire contient des attributs tels que 'content', 'file', 'type',
+                        et éventuellement 'cosine_similarity' ou 'l2_distance' pour l’information de pertinence.
+        :type results: List[Dict]
+        :param question: La question à laquelle il faut répondre en s’appuyant sur les résultats et le contexte fournis.
+        :type question: str
+        :return: Un prompt structuré et détaillé utilisé pour générer une réponse claire et pédagogique.
+        :rtype: str
         """
         if not results:
             return f"""Réponds à la question suivante du mieux que tu peux :\n\nQuestion : {question}\n\nRéponse :"""
@@ -234,7 +337,18 @@ Réponse :"""
         return prompt.strip()
 
     def get_stats(self) -> Dict:
-        """Retourne des statistiques sur le système"""
+        """
+        Fournit des métadonnées statistiques sur l’état actuel de l’objet.
+
+        :return: Un dictionnaire contenant les métadonnées suivantes :
+                 - model_name : Le nom du modèle utilisé.
+                 - corpus_dir : Le chemin du répertoire du corpus.
+                 - similarity_metric : L’identifiant de la métrique de similarité utilisée.
+                 - indexed_documents : Le nombre de documents indexés.
+                 - last_reload : Une chaîne de caractères représentant le timestamp de la dernière modification.
+                 - index_ready : Un booléen indiquant si l’index est prêt (initialisé).
+        :rtype: Dict
+        """
         return {
             "model_name": self.model_name,
             "corpus_dir": self.corpus_dir,
@@ -245,7 +359,14 @@ Réponse :"""
         }
 
     def force_reload(self):
-        """Force le rechargement du corpus"""
+        """
+        Force le rechargement d’une ressource ou d’une configuration,
+        en contournant toutes les vérifications conditionnelles qui empêcheraient normalement ce rechargement.
+        Elle définit l’attribut ``last_modified`` à 0 et déclenche un rechargement forcé
+        en appelant le mécanisme de rechargement.
+
+        :raises RuntimeError: En cas d’erreur inattendue lors de l’exécution du rechargement.
+        """
         print("🔄 Rechargement forcé...")
         self.last_modified = 0
         self._check_and_reload_if_needed(force=True)

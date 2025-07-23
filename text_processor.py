@@ -5,7 +5,21 @@ from typing import List, Dict, Tuple
 
 class TextProcessor:
     """
-    Gestionnaire de traitement et découpage de texte pour l'embedding
+    Traite des données textuelles en les segmentant en blocs optimisés pour l’indexation via des embeddings,
+    tout en respectant une stratégie hiérarchique de découpage.
+
+    Cette classe gère la segmentation du texte par paragraphes, par phrases, et inclut un découpage forcé
+    en dernier recours si les segments sont trop longs. Elle propose également des fonctionnalités de prétraitement,
+    de déduplication, de filtrage, ainsi qu’une analyse statistique des blocs de texte générés.
+
+    :ivar chunk_size: Taille maximale d’un bloc de texte.
+    :type chunk_size: int
+
+    :ivar min_chunk_size: Taille minimale pour qu’un bloc soit considéré comme valide.
+    :type min_chunk_size: int
+
+    :ivar overlap: Nombre de caractères de chevauchement entre deux blocs consécutifs.
+    :type overlap: int
     """
 
     def __init__(self, chunk_size: int = 300, min_chunk_size: int = 50, overlap: int = 50):
@@ -164,7 +178,7 @@ class TextProcessor:
             if chunk_normalized not in seen:
                 seen.add(chunk_normalized)
                 unique_chunks.append(chunk)
-
+        print(unique_chunks)
         return unique_chunks
 
     def prepare_texts_for_embedding(self, course_blocks: List[Dict]) -> Tuple[List[str], List[Dict]]:

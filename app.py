@@ -1,11 +1,11 @@
 import os
+import time
 
 from flask import Flask, request, jsonify, Response, abort
 from flask_cors import CORS
 import json
 import ollama
 import threading
-import time
 from datetime import datetime
 from rag_system import VectorRAG
 from dotenv import load_dotenv
@@ -25,9 +25,36 @@ PYTHON_API_KEY = os.getenv("PYTHON_API_KEY")
 rag_system = None
 rag_lock = threading.Lock()
 
+# Thread de surveillance des modifications
+def watch_corpus_changes():
+    """Thread qui surveille les changements dans le corpus"""
+    while True:
+        try:
+            if rag_system:
+                print("check")
+                rag_system._check_and_reload_if_needed()
+            time.sleep(60)  # Vérification toutes les 60 secondes
+        except Exception as e:
+            print(f"❌ Erreur dans la surveillance du corpus: {e}")
+            time.sleep(240)  # Attendre plus longtemps en cas d'erreur
+
+
+# Démarrage du thread de surveillance
+watcher_thread = threading.Thread(target=watch_corpus_changes, daemon=True)
+watcher_thread.start()
+
 
 def initialize_rag():
-    """Initialise le système RAG de manière thread-safe"""
+    """
+    Initialise le système global RAG (Retrieval-Augmented Generation) de manière sécurisée
+    en multithreading grâce à un verrou. Cette fonction garantit que le système n’est
+    initialisé qu’une seule fois afin d’éviter des opérations redondantes.
+
+    :global rag_system: Variable globale représentant le système RAG. Initialisée si elle ne l’est pas déjà.
+    :global rag_lock: Objet verrou utilisé pour assurer une initialisation thread-safe.
+
+    :return: None
+    """
     global rag_system
     with rag_lock:
         if rag_system is None:
@@ -36,6 +63,19 @@ def initialize_rag():
 
 @app.before_request
 def check_api_key():
+    """
+    Cette fonction est un gestionnaire Flask exécuté avant chaque requête,
+    qui vérifie la clé API présente dans les en-têtes de la requête.
+    Elle renforce la sécurité en s’assurant que la plupart des appels aux endpoints
+    contiennent une clé valide. Les requêtes vers certaines routes exemptées
+    passent outre cette validation.
+
+    :param exempt_routes: Liste des routes exclues de la validation de la clé API.
+        Par exemple, la route "/docs" est actuellement exemptée.
+    :type exempt_routes: list
+
+    :return: None
+    """
     exempt_routes = ["/docs"]
     if request.path in exempt_routes:
         return  # ne vérifie pas
@@ -47,7 +87,17 @@ def check_api_key():
 
 @app.route('/corpus/reload', methods=['POST'])
 def reload_corpus():
-    """Force le rechargement du corpus"""
+    """
+    Gère le rechargement du corpus en réinitialisant le système RAG et en forçant une recharge,
+    tout en garantissant la sécurité des threads grâce à des verrous.
+
+    :raise Exception: Capture et gère toute erreur inattendue survenant pendant le rechargement.
+
+    :return: Une réponse JSON contenant un message de succès, les statistiques actualisées du corpus,
+         et un horodatage de l’opération de rechargement. En cas d’erreur, une réponse JSON
+         avec un message d’erreur et un code HTTP 500 est renvoyée.
+    :rtype: flask.Response
+    """
     try:
         if rag_system is None:
             initialize_rag()
@@ -69,7 +119,23 @@ def reload_corpus():
 
 @app.route('/chat/stream', methods=['POST'])
 def chat_stream():
-    """Chat avec streaming"""
+    """
+    Gère les événements envoyés par le serveur (SSE  Server-Sent Events) pour un endpoint de chat,
+    en utilisant un système RAG (Retrieval-Augmented Generation) pour répondre aux requêtes des utilisateurs.
+    La fonction s’assure que le système RAG est initialisé, récupère la saisie utilisateur,
+    effectue une recherche basée sur la similarité via RAG, construit une invite (prompt)
+    et diffuse le contenu de la réponse en continu, incluant les sources pertinentes.
+
+    :raises: Exception
+        Si l’initialisation du système RAG échoue ou si une erreur survient pendant l’exécution.
+
+    :parameters:
+        Aucun
+
+    :return: Objet réponse Flask qui stream les données pour le SSE, avec le contenu incrémental
+             et les informations sur les sources.
+    :rtype: Response
+    """
     try:
         if rag_system is None:
             initialize_rag()

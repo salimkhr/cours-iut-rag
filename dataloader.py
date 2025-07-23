@@ -1,14 +1,31 @@
 import os
 from typing import List, Dict
-import markdown
-from markdown.treeprocessors import Treeprocessor
-from markdown.extensions import Extension
 import re
 
 
 def _add_list_item(stack, item, indent, level_indent=2):
     """
-    Ajoute un item à une liste hiérarchique en fonction de son niveau d'indentation.
+     Ajoute un élément à la liste en respectant le niveau de hiérarchie défini.
+
+    Cette fonction permet d’organiser des éléments dans une structure imbriquée en fonction
+    de leur niveau d’indentation. Les éléments peuvent être ajoutés directement à la liste
+    ou intégrés dans un dictionnaire contenant des sous-éléments, selon leur niveau hiérarchique.
+
+    :param stack: Liste dans laquelle les éléments sont insérés. Elle peut contenir
+                  des chaînes de caractères ou des dictionnaires avec les clés "content"
+                  et "subitems".
+    :type stack: list
+    :param item: L’élément à ajouter à la pile. Il peut s’agir d’une chaîne de caractères
+                 ou de tout autre objet à insérer dans la structure.
+    :type item: Any
+    :param indent: Le niveau d’indentation utilisé pour déterminer la position hiérarchique
+                   de l’élément dans la liste.
+    :type indent: int
+    :param level_indent: Nombre d’espaces (ou tabulations) représentant un niveau de hiérarchie.
+                         Par défaut : 2.
+    :type level_indent: int
+    :return: Rien ; la pile est modifiée directement avec l’élément ajouté au bon niveau.
+    :rtype: None
     """
     level = indent // level_indent
 
@@ -28,6 +45,27 @@ def _add_list_item(stack, item, indent, level_indent=2):
 
 
 def _parse_markdown_table(table_lines):
+    """
+    Analyse un tableau au format Markdown et en extrait les en-têtes et les lignes.
+
+    L’entrée attendue est une liste de lignes représentant un tableau Markdown, où chaque ligne
+    correspond à une ligne du tableau, et les cellules sont séparées par le caractère pipe `|`.
+    Si une ligne de séparation valide (par exemple, "---") est détectée, les en-têtes seront extraits
+    de la première ligne ; sinon, aucun en-tête ne sera considéré.
+
+    :param table_lines: Liste de chaînes représentant les lignes d’un tableau Markdown.
+                        Chaque ligne correspond à une ligne du tableau, avec les cellules
+                        séparées par des pipes `|`.
+    :type table_lines: list[str]
+
+    :return: Un dictionnaire contenant :
+             - "type" : toujours égal à "table" ;
+             - "headers" : une liste de chaînes représentant les en-têtes du tableau,
+                           ou une liste vide s’il n’y en a pas ;
+             - "rows" : une liste de listes représentant les lignes de données, où chaque sous-liste
+                        correspond à une ligne avec ses cellules.
+    :rtype: dict
+    """
     def split_row(line):
         return [cell.strip() for cell in line.strip().strip('|').split('|')]
 
@@ -47,7 +85,15 @@ def _parse_markdown_table(table_lines):
 
 class CourseDataLoader:
     """
-    Gestionnaire de chargement des données de cours depuis des fichiers Markdown
+    Gère le chargement et l’analyse des données de cours stockées dans des fichiers Markdown.
+
+    Cette classe offre des fonctionnalités pour parcourir récursivement un répertoire contenant des fichiers Markdown,
+    en extraire des blocs de contenu structurés, et les retourner dans un format organisé.
+    Les données extraites peuvent inclure différents types de contenu tels que des titres, listes, blocs de code,
+    tableaux ou du texte général.
+
+    :ivar corpus_dir: Chemin vers le répertoire contenant les fichiers Markdown des cours.
+    :type corpus_dir: str
     """
 
     def __init__(self, corpus_dir: str):
