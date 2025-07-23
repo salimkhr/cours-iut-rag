@@ -1,4 +1,4 @@
-from dataloader import _add_list_item, _parse_markdown_table, CourseDataLoader
+from src.dataloader import _add_list_item, _parse_markdown_table, CourseDataLoader
 
 def test_headings_levels():
     md = "# Titre 1\n## Titre 2\n### Titre 3"
