@@ -169,23 +169,23 @@ class VectorRAG:
             self.index = None
             self.meta = []
 
-    def _check_and_reload_if_needed(self, force: bool = False) -> bool:
+    def _check_and_reload_if_needed(self) -> bool:
         """
         Vérifie et recharge les données si nécessaire, en fonction du timestamp de modification ou
         si le rechargement est forcé. Cette méthode contrôle la date de dernière modification du corpus
         et décide de reconstruire l’index selon les changements détectés ou si un rechargement est demandé.
 
-        :param force: Booléen indiquant si le rechargement doit être forcé,
-                      même si le timestamp n’a pas changé.
         :return: Booléen indiquant si les données ont été rechargées ou non.
         """
         current_modified = self._get_corpus_last_modified()
 
-        if force or current_modified > self.last_modified:
+        if current_modified > self.last_modified:
             print("🔄 Rechargement des données du corpus...")
             self.last_modified = current_modified
             self._build_index()
             return True
+        else:
+            print("❌ Rechargement non necessaire")
         return False
 
     def search_similar(self, query: str, k: int = 5, include_neighbors: bool = True) -> List[Dict]:
@@ -369,4 +369,4 @@ Réponse :"""
         """
         print("🔄 Rechargement forcé...")
         self.last_modified = 0
-        self._check_and_reload_if_needed(force=True)
+        self._check_and_reload_if_needed()

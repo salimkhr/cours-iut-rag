@@ -25,25 +25,6 @@ PYTHON_API_KEY = os.getenv("PYTHON_API_KEY")
 rag_system = None
 rag_lock = threading.Lock()
 
-# Thread de surveillance des modifications
-def watch_corpus_changes():
-    """Thread qui surveille les changements dans le corpus"""
-    while True:
-        try:
-            if rag_system:
-                print("check")
-                rag_system._check_and_reload_if_needed()
-            time.sleep(60)  # Vérification toutes les 60 secondes
-        except Exception as e:
-            print(f"❌ Erreur dans la surveillance du corpus: {e}")
-            time.sleep(240)  # Attendre plus longtemps en cas d'erreur
-
-
-# Démarrage du thread de surveillance
-watcher_thread = threading.Thread(target=watch_corpus_changes, daemon=True)
-watcher_thread.start()
-
-
 def initialize_rag():
     """
     Initialise le système global RAG (Retrieval-Augmented Generation) de manière sécurisée

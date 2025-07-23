@@ -157,18 +157,18 @@ class TextProcessor:
     def _post_process_chunks(self, chunks: List[str]) -> List[str]:
         """
         Post-traitement des chunks (déduplication, filtrage)
-
+        
         Args:
             chunks: Liste des chunks bruts
-
+        
         Returns:
             Liste des chunks traités
         """
         # Filtrage des chunks trop courts
-        filtered_chunks = [
+        filtered_chunks = (
             chunk for chunk in chunks
             if len(chunk) >= self.min_chunk_size
-        ]
+        )
 
         # Déduplication basique
         seen = set()
@@ -178,7 +178,6 @@ class TextProcessor:
             if chunk_normalized not in seen:
                 seen.add(chunk_normalized)
                 unique_chunks.append(chunk)
-        print(unique_chunks)
         return unique_chunks
 
     def prepare_texts_for_embedding(self, course_blocks: List[Dict]) -> Tuple[List[str], List[Dict]]:
