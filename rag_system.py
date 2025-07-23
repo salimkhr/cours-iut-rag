@@ -47,7 +47,7 @@ class VectorRAG:
         latest_time = 0
         for root, dirs, files in os.walk(self.corpus_dir):
             for file in files:
-                if file.endswith('.json'):
+                if file.endswith('.md'):
                     file_path = os.path.join(root, file)
                     file_time = os.path.getmtime(file_path)
                     latest_time = max(latest_time, file_time)

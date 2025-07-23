@@ -8,7 +8,6 @@ import threading
 import time
 from datetime import datetime
 from rag_system import VectorRAG
-from auth import require_api_key
 from dotenv import load_dotenv
 
 load_dotenv(".env.local")
@@ -17,9 +16,10 @@ app = Flask(__name__)
 CORS(app)
 
 # Configuration
-CORPUS_DIR = "./rag/markdown"
-MODEL_NAME = "all-MiniLM-L6-v2"
-OLLAMA_MODEL = "codellama:7b"
+CORPUS_DIR = os.getenv("CORPUS_DIR")
+MODEL_NAME = os.getenv("MODEL_NAME")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL")
+PYTHON_API_KEY = os.getenv("PYTHON_API_KEY")
 
 # Instance globale du système RAG
 rag_system = None
@@ -34,84 +34,16 @@ def initialize_rag():
             print("🚀 Initialisation du système RAG...")
             rag_system = VectorRAG(model_name=MODEL_NAME, corpus_dir=CORPUS_DIR)
 
+@app.before_request
+def check_api_key():
+    exempt_routes = ["/docs"]
+    if request.path in exempt_routes:
+        return  # ne vérifie pas
+    api_key = request.headers.get("x-api-key")
 
-# Thread de surveillance des modifications
-def watch_corpus_changes():
-    """Thread qui surveille les changements dans le corpus"""
-    while True:
-        try:
-            if rag_system:
-                rag_system._check_and_reload_if_needed()
-            time.sleep(10)  # Vérification toutes les 10 secondes
-        except Exception as e:
-            print(f"❌ Erreur dans la surveillance du corpus: {e}")
-            time.sleep(30)  # Attendre plus longtemps en cas d'erreur
-
-
-# Démarrage du thread de surveillance
-watcher_thread = threading.Thread(target=watch_corpus_changes, daemon=True)
-watcher_thread.start()
-
-
-# @app.before_first_request
-# def startup():
-#     """Initialisation lors du premier accès"""
-#     initialize_rag()
-
-
-# @app.route('/health', methods=['GET'])
-# def health_check():
-#     """Endpoint de santé avec statistiques détaillées"""
-#     try:
-#         if rag_system is None:
-#             initialize_rag()
-#
-#         stats = rag_system.get_stats()
-#
-#         # Test de connectivité Ollama
-#         ollama_status = "unknown"
-#         try:
-#             ollama.list()
-#             ollama_status = "connected"
-#         except Exception:
-#             ollama_status = "disconnected"
-#
-#         return jsonify({
-#             "status": "ok",
-#             "timestamp": datetime.now().isoformat(),
-#             "rag_system": stats,
-#             "ollama_status": ollama_status,
-#             "ollama_model": OLLAMA_MODEL
-#         })
-#
-#     except Exception as e:
-#         return jsonify({
-#             "status": "error",
-#             "error": str(e),
-#             "timestamp": datetime.now().isoformat()
-#         }), 500
-
-
-# @app.route('/corpus/info', methods=['GET'])
-# def corpus_info():
-#     """Informations détaillées sur le corpus"""
-#     try:
-#         if rag_system is None:
-#             initialize_rag()
-#
-#         files_info = rag_system.data_loader.list_corpus_files()
-#         stats = rag_system.get_stats()
-#
-#         return jsonify({
-#             "corpus_directory": CORPUS_DIR,
-#             "files": files_info,
-#             "total_files": len(files_info),
-#             "system_stats": stats
-#         })
-#
-#     except Exception as e:
-#         return jsonify({"error": str(e)}), 500
-
+    expected = PYTHON_API_KEY
+    if not api_key or api_key != expected:
+        abort(403)
 
 @app.route('/corpus/reload', methods=['POST'])
 def reload_corpus():
@@ -130,89 +62,6 @@ def reload_corpus():
             "stats": stats,
             "timestamp": datetime.now().isoformat()
         })
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.before_request
-def check_api_key():
-    exempt_routes = ["/docs","/corpus/reload"]
-    if request.path in exempt_routes:
-        return  # ne vérifie pas
-    api_key = request.headers.get("x-api-key")
-
-    expected = os.getenv("PYTHON_API_KEY")
-    if not api_key or api_key != expected:
-        abort(403)
-
-# @app.route('/search', methods=['POST'])
-# def search_only():
-#     """Endpoint pour la recherche seule (sans LLM)"""
-#     try:
-#         if rag_system is None:
-#             initialize_rag()
-#
-#         data = request.get_json()
-#         query = data.get('query', '').strip()
-#         k = data.get('k', 5)
-#
-#         if not query:
-#             return jsonify({"error": "Query vide"}), 400
-#
-#         with rag_lock:
-#             results = rag_system.search_similar(query, k=k)
-#
-#         return jsonify({
-#             "query": query,
-#             "results": results,
-#             "count": len(results)
-#         })
-#
-#     except Exception as e:
-#         return jsonify({"error": str(e)}), 500
-
-
-@app.route('/chat', methods=['POST'])
-def chat():
-    """Chat sans streaming"""
-    try:
-        # if rag_system is None:
-        initialize_rag()
-
-        data = request.get_json()
-        message = data.get('message', '').strip()
-        k = data.get('k', 3)  # Nombre de documents à récupérer
-
-        if not message:
-            return jsonify({"error": "Message vide"}), 400
-
-        # Recherche RAG avec thread safety
-        with rag_lock:
-            results = rag_system.search_similar(message, k=k)
-            prompt = rag_system.build_rag_prompt(results, message)
-
-        # Appel Ollama
-        try:
-            response = ollama.chat(
-                model=OLLAMA_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                stream=False
-            )
-
-            return jsonify({
-                "response": response["message"]["content"],
-                "sources": [{
-                    "file": r["file"],
-                    "type": r["type"],
-                    "similarity_score": r["similarity_score"],
-                    "content_preview": r["content"][:150] + "..." if len(r["content"]) > 150 else r["content"]
-                } for r in results],
-                "query": message,
-                "timestamp": datetime.now().isoformat()
-            })
-
-        except Exception as e:
-            return jsonify({"error": f"Erreur Ollama: {str(e)}"}), 500
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -245,7 +94,7 @@ def chat_stream():
             try:
                 # Stream depuis Ollama
                 stream = ollama.chat(
-                    model="codellama:7b",
+                    model=OLLAMA_MODEL,
                     messages=[{"role": "user", "content": prompt}],
                     stream=True
                 )
@@ -269,7 +118,6 @@ def chat_stream():
                         for r in results
                     ]
                 }
-                yield f"data: {json.dumps(sources_data)}\n\n"
                 yield f"data: {json.dumps(sources_data)}\n\n"
                 yield "data: [DONE]\n\n"
 
