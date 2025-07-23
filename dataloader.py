@@ -3,6 +3,47 @@ from typing import List, Dict
 import markdown
 from markdown.treeprocessors import Treeprocessor
 from markdown.extensions import Extension
+import re
+
+
+def _add_list_item(stack, item, indent, level_indent=2):
+    """
+    Ajoute un item à une liste hiérarchique en fonction de son niveau d'indentation.
+    """
+    level = indent // level_indent
+
+    def insert(stack, level, item):
+        if level == 0:
+            stack.append(item)
+        else:
+            last = stack[-1]
+            if isinstance(last, str):
+                last = {"content": last, "subitems": []}
+                stack[-1] = last
+            elif "subitems" not in last:
+                last["subitems"] = []
+            insert(last["subitems"], level - 1, item)
+
+    insert(stack, level, item)
+
+
+def _parse_markdown_table(table_lines):
+    def split_row(line):
+        return [cell.strip() for cell in line.strip().strip('|').split('|')]
+
+    rows = [split_row(line) for line in table_lines if '|' in line]
+    if len(rows) >= 2 and re.match(r"^-{2,}", rows[1][0]):
+        headers = rows[0]
+        data_rows = rows[2:]  # skip separator
+    else:
+        headers = []
+        data_rows = rows
+
+    return {
+        "type": "table",
+        "headers": headers,
+        "rows": data_rows
+    }
 
 class CourseDataLoader:
     """
@@ -53,80 +94,108 @@ class CourseDataLoader:
         return course_blocks
 
     def _parse_markdown_blocks(self, md_content: str) -> List[Dict]:
-        """
-        Parse le contenu Markdown et extrait les blocs (titre, texte, liste, code, table).
-
-        Ici on fait simple : découpe par lignes, détecte les blocs de code, titres, listes.
-
-        Returns:
-            Liste des blocs sous forme de dictionnaires avec 'type' et 'content'
-        """
         blocks = []
         lines = md_content.splitlines()
         buffer = []
         current_type = None
+        list_stack = []
 
         def flush_buffer():
-            nonlocal buffer, current_type
-            if buffer:
+            nonlocal buffer, current_type, list_stack
+            if current_type in ("list", "ordered_list") and list_stack:
+                blocks.append({"type": current_type, "items": list_stack})
+                list_stack = []
+            elif buffer:
                 content = "\n".join(buffer).strip()
                 if content:
                     blocks.append({"type": current_type or "content", "content": content})
-                buffer = []
-                current_type = None
+            elif current_type == "table" and buffer:
+                table_block = _parse_markdown_table(buffer)
+                blocks.append(table_block)
+            buffer = []
+            current_type = None
 
         in_code_block = False
-        code_block_lang = None
 
         for line in lines:
-            # Détection bloc code markdown ```
-            if line.startswith("```"):
+            raw_line = line
+            line = line.rstrip("\n")
+            stripped = line.lstrip()
+            indent = len(line) - len(stripped)
+
+            # Bloc de code
+            if stripped.startswith("```"):
                 if not in_code_block:
                     flush_buffer()
                     in_code_block = True
-                    code_block_lang = line[3:].strip()
                     current_type = "code"
                     buffer = []
                 else:
-                    # fin du bloc code
                     flush_buffer()
                     in_code_block = False
-                    code_block_lang = None
                 continue
 
             if in_code_block:
-                buffer.append(line)
+                buffer.append(raw_line)
                 continue
 
-            # Détection titre Markdown
-            if line.startswith("#"):
+            # Titre
+            if stripped.startswith("#"):
                 flush_buffer()
-                level = len(line) - len(line.lstrip('#'))
-                content = line.lstrip('#').strip()
+                level = len(stripped) - len(stripped.lstrip("#"))
+                content = stripped.lstrip("#").strip()
                 blocks.append({"type": "heading", "level": level, "content": content})
                 continue
 
-            # Détection liste (lignes commençant par - ou *)
-            if line.strip().startswith(("-", "*")):
+            # Tableau Markdown
+            # Détection de ligne de tableau (ligne contenant des |)
+            if "|" in line and re.search(r"\|", stripped):
+                if current_type != "table":
+                    flush_buffer()
+                    current_type = "table"
+                    buffer = []
+                buffer.append(line)
+                continue
+
+            # En fin de bloc ou ligne vide : si tableau, on le parse
+            if not stripped and current_type == "table":
+                if buffer:
+                    table_block = _parse_markdown_table(buffer)
+                    blocks.append(table_block)
+                    buffer = []
+                    current_type = None
+                continue
+
+            # Liste ordonnée
+            if re.match(r"^\d+\.\s", stripped):
+                match = re.match(r"^(\d+\.)\s+(.*)", stripped)
+                item = match.group(2)
+                if current_type != "ordered_list":
+                    flush_buffer()
+                    current_type = "ordered_list"
+                    list_stack = []
+                _add_list_item(list_stack, item, indent)
+                continue
+
+            # Liste non ordonnée
+            if re.match(r"^[-*+]\s", stripped):
+                item = re.sub(r"^[-*+]\s+", "", stripped)
                 if current_type != "list":
                     flush_buffer()
                     current_type = "list"
-                    buffer = []
-                buffer.append(line.strip())
+                    list_stack = []
+                _add_list_item(list_stack, item, indent)
                 continue
 
-            # Ligne vide : flush buffer
-            if not line.strip():
+            # Ligne vide
+            if not stripped:
                 flush_buffer()
                 continue
 
-            # Par défaut texte
+            # Par défaut : texte
             if current_type not in (None, "content"):
                 flush_buffer()
-                current_type = "content"
-                buffer = []
-
-            current_type = current_type or "content"
+            current_type = "content"
             buffer.append(line)
 
         flush_buffer()
