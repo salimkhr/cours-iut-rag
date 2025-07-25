@@ -18,9 +18,10 @@ def test_clean_text(processor):
 def test_split_by_paragraphs(processor):
     text = "Paragraphe un.\n\nParagraphe deux. Phrase deux."
     paragraphs = processor._split_by_paragraphs(text)
-    assert len(paragraphs) == 2
+    assert len(paragraphs) == 3
     assert paragraphs[0] == "Paragraphe un."
-    assert paragraphs[1] == "Paragraphe deux. Phrase deux."
+    assert paragraphs[1] == "Paragraphe deux."
+    assert paragraphs[2] == "Phrase deux."
 
 def test_split_by_sentences(processor):
     text = "Phrase une. Phrase deux! Phrase trois?"

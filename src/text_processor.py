@@ -31,10 +31,10 @@ class TextProcessor:
         """
         Découpe un texte en chunks optimisés pour l'embedding
 
-        Args:
+        :param
             text: Texte à découper
 
-        Returns:
+        :returns
             Liste des chunks de texte
         """
         if not text.strip():
@@ -74,37 +74,35 @@ class TextProcessor:
         return text
 
     def _split_by_paragraphs(self, text: str) -> List[str]:
-        # Découpage sur double saut de ligne ou points suivis de majuscule,
-        # en conservant le point à la fin du paragraphe
-        parts = re.split(r'(\n\n+|(?<=\.)(?= +[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ]))', text)
+        """
+        Cette méthode utilise des expressions régulières pour identifier les limites des paragraphes dans le texte fourni.
+        Elle divise le texte aux endroits où il y a soit deux sauts de ligne consécutifs, soit un point suivi d’une lettre majuscule (en tenant compte de différents alphabets).
 
-        paragraphs = []
-        current = ""
-        for part in parts:
-            if re.match(r'\n\n+', part):
-                if current.strip():
-                    paragraphs.append(current.strip())
-                current = ""
-            elif re.match(r'(?<=\.)(?= +[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ])', part):
-                # séparation par phrase : on termine le paragraphe en gardant le point
-                if current.strip():
-                    paragraphs.append(current.strip())
-                current = ""
-            else:
-                current += part
-        if current.strip():
-            paragraphs.append(current.strip())
-        return paragraphs
+        :param text: Le contenu textuel à découper en paragraphes.
+        :type text: str
+        :return: Une liste de paragraphes, chacun étant nettoyé des espaces superflus en début et fin.
+        :rtype: List[str]
+        """
+        # Découpage sur double saut de ligne ou points suivis de majuscule
+        paragraphs = re.split(r'\n\n+|\. +(?=[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ])', text)
+
+        cleaned = []
+        for p in paragraphs:
+            p = p.strip()
+            if p:
+                if not p.endswith(('.', '!', '?')):
+                    p += '.'
+                cleaned.append(p)
+
+        return cleaned
 
     def _split_by_sentences(self, text: str) -> List[str]:
         """
         Découpe un texte long en chunks basés sur les phrases
 
-        Args:
-            text: Texte à découper
+        :param Texte à découper
 
-        Returns:
-            Liste des chunks
+        :returns Liste des chunks
         """
         # Découpage approximatif par phrases
         sentences = re.split(r'(?<=[.!?])\s+(?=[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ])', text)
@@ -142,10 +140,10 @@ class TextProcessor:
         """
         Découpage forcé d'un texte trop long
 
-        Args:
+        :param
             text: Texte à découper
 
-        Returns:
+        :returns
             Liste des chunks
         """
         chunks = []
@@ -174,10 +172,10 @@ class TextProcessor:
         """
         Post-traitement des chunks (déduplication, filtrage)
         
-        Args:
+        :param
             chunks: Liste des chunks bruts
         
-        Returns:
+        :returns
             Liste des chunks traités
         """
         # Filtrage des chunks trop courts
@@ -200,10 +198,10 @@ class TextProcessor:
         """
         Prépare tous les textes pour l'embedding
 
-        Args:
+        :param
             course_blocks: Liste des blocs de cours chargés
 
-        Returns:
+        :returns
             Tuple (textes, métadonnées)
         """
         texts = []
@@ -249,10 +247,10 @@ class TextProcessor:
         """
         Calcule des statistiques sur les chunks
 
-        Args:
+        :param
             chunks: Liste des chunks
 
-        Returns:
+        :returns
             Dictionnaire des statistiques
         """
         if not chunks:

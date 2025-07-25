@@ -318,14 +318,14 @@ class VectorRAG:
 
             context += f"\n### Extrait {i} ({r['file']}) – {r['type']}{score_info}\n{r['content']}\n"
 
-        prompt = f"""Voici des extraits de cours universitaires pertinents :
+        prompt = f"""Contexte :
 
 {context}
 
 Instructions :
-- Réponds à la question en te basant principalement sur ces extraits
-- Structure ta réponse de manière claire et pédagogique
-- Si la réponse n'est pas complètement dans les extraits, utilise tes connaissances générales mais indique-le
+- Réponds à la question
+- Structure ta réponse de manière concise et pédagogique
+- Utilise uniquement les informations contenues dans le contexte
 - Cite les sources quand c'est pertinent
 
 Question : {question}
